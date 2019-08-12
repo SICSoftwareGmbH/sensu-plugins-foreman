@@ -1,0 +1,84 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+#
+# check-foreman-proxy-alive
+#
+# DESCRIPTION:
+#   Checks if foreman-proxy is alive
+#
+# OUTPUT:
+#   Plain text
+#
+# PLATFORMS:
+#   Linux
+#
+# DEPENDENCIES:
+#   gem: sensu-plugin
+#
+# LICENSE:
+#   SIC! Software GmbH <info@sic.software>
+#   Released under the same terms as Sensu (the MIT license); see LICENSE
+#   for details.
+#
+
+require 'sensu-plugin/check/cli'
+require 'net/https'
+require 'json'
+
+# Checks if foreman-proxy daemon is working
+class CheckForemanProxy < Sensu::Plugin::Check::CLI
+  DEFAULT_URL = 'https://localhost:8443/'
+
+  option :url,
+         short: '-u URL',
+         long: '--url URL',
+         description: 'URL of foreman-proxy',
+         default: nil
+
+  def run
+    check
+  rescue StandardError => e
+    critical("Request error: #{e.message}")
+  end
+
+  private
+
+  def url
+    return config[:url] if config[:url]&.positive?
+
+    DEFAULT_URL
+  end
+
+  def version_response
+    uri = URI.parse(File.join(url, 'version'))
+
+    http = Net::HTTP.new(uri.host, uri.port, nil, nil)
+    http.use_ssl = true
+    http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+    req = Net::HTTP::Get.new(uri.request_uri)
+
+    http.request(req)
+  end
+
+  def parse_version_response(res)
+    data = JSON.parse(res.body)
+
+    [data['version'], data['modules']]
+  end
+
+  def check
+    res = version_response
+
+    if res.code.to_i == 200
+      version, modules = parse_version_response(res)
+
+      modules = modules.keys.map { |k| "#{k} (#{modules[k]})" }.join(', ')
+
+      ok("version: #{version}, modules: #{modules}")
+    else
+      critical(res.body)
+    end
+  end
+end
